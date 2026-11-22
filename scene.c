@@ -1,0 +1,561 @@
+#include <u.h>
+#include <libc.h>
+#include "scene.h"
+
+#define CAMZ	3.2
+#define XSCALE	26.0
+#define YSCALE	13.0
+#define XBOUND	1.25
+#define YBOUND	0.80
+#define ZBOUND	0.45
+
+#define LX	-0.42
+#define LY	-0.58
+#define LZ	-0.70
+
+static char ramp[] = " .:-=+*#%@";
+
+typedef struct V3 V3;
+struct V3 {
+	double	x, y, z;
+};
+
+typedef struct Face Face;
+struct Face {
+	int	n;
+	int	v[4];
+};
+
+typedef struct View View;
+struct View {
+	Shape	*s;
+	double	scale;
+	double	cx, sx;
+	double	cy, sy;
+	double	cz, sz;
+};
+
+typedef struct Canvas Canvas;
+struct Canvas {
+	char	(*out)[GW+1];
+	uchar	(*style)[GW];
+	double	(*zbuf)[GW];
+};
+
+static Shape shapes[MaxShapes];
+static int nshapes;
+static double spin = 0.18;	/* torus radians/second */
+static ulong rng = 1;
+
+static V3 cubev[] = {
+	{-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+	{-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
+};
+
+static Face cubef[] = {
+	{4, {0, 1, 2, 3}},
+	{4, {5, 4, 7, 6}},
+	{4, {4, 0, 3, 7}},
+	{4, {1, 5, 6, 2}},
+	{4, {4, 5, 1, 0}},
+	{4, {3, 2, 6, 7}},
+};
+
+static V3 pyramidv[] = {
+	{ 0, -1.30,  0},
+	{-1,  1.00, -1},
+	{ 1,  1.00, -1},
+	{ 1,  1.00,  1},
+	{-1,  1.00,  1},
+};
+
+static Face pyramidf[] = {
+	{3, {0, 1, 2}},
+	{3, {0, 2, 3}},
+	{3, {0, 3, 4}},
+	{3, {0, 4, 1}},
+	{4, {1, 4, 3, 2}},
+};
+
+static V3 tetrav[] = {
+	{ 1,  1,  1},
+	{ 1, -1, -1},
+	{-1,  1, -1},
+	{-1, -1,  1},
+};
+
+static Face tetraf[] = {
+	{3, {0, 1, 2}},
+	{3, {0, 3, 1}},
+	{3, {0, 2, 3}},
+	{3, {1, 3, 2}},
+};
+
+static V3 octav[] = {
+	{ 1,  0,  0},
+	{-1,  0,  0},
+	{ 0,  1,  0},
+	{ 0, -1,  0},
+	{ 0,  0,  1},
+	{ 0,  0, -1},
+};
+
+static Face octaf[] = {
+	{3, {0, 2, 4}}, {3, {0, 4, 3}}, {3, {0, 3, 5}}, {3, {0, 5, 2}},
+	{3, {1, 4, 2}}, {3, {1, 3, 4}}, {3, {1, 5, 3}}, {3, {1, 2, 5}},
+};
+
+static double
+scenerand(void)
+{
+	rng ^= rng << 13;
+	rng ^= rng >> 7;
+	rng ^= rng << 17;
+	return (double)(rng & 0xffffff) / 16777215.0;
+}
+
+void
+scenesrand(ulong seed)
+{
+	rng = seed;
+	if(rng == 0)
+		rng = 0x9e3779b9;
+}
+
+void
+scenesetspeed(double s)
+{
+	if(s < 0)
+		s = 0;
+	if(s > 6)
+		s = 6;
+	spin = s;
+}
+
+static int
+shapefor(char *name)
+{
+	if(strstr(name, "fetch") != nil || strstr(name, "searxng") != nil)
+		return SOcta;
+	if(strstr(name, "agent") != nil || strstr(name, "summar") != nil)
+		return STetra;
+	if(strstr(name, "read") != nil || strstr(name, "write") != nil
+	|| strstr(name, "list") != nil || strstr(name, "memory") != nil)
+		return SPyramid;
+	return SCube;
+}
+
+void
+scenereset(void)
+{
+	Shape *s;
+
+	memset(shapes, 0, sizeof shapes);
+	nshapes = 0;
+
+	s = &shapes[nshapes++];
+	s->kind = STorus;
+	s->scale = 0.80;
+	s->style = StyleMain;
+	s->rx = 0.35;
+	s->ry = 0.15;
+}
+
+void
+sceneclear(void)
+{
+	nshapes = 0;
+}
+
+Shape*
+scenespawntool(char *name)
+{
+	Shape *s;
+	int i;
+	char *dot;
+
+	if(name == nil)
+		name = "tool";
+	if(nshapes >= MaxShapes){
+		/* drop the oldest transient shape, never the torus */
+		memmove(&shapes[1], &shapes[2], (nshapes - 2) * sizeof(Shape));
+		nshapes--;
+	}
+
+	s = &shapes[nshapes++];
+	memset(s, 0, sizeof *s);
+	s->kind = shapefor(name);
+	s->style = StyleTool;
+	switch(s->kind){
+	case SPyramid:
+		s->scale = 0.42 + scenerand() * 0.06;
+		break;
+	case STetra:
+		s->scale = 0.52 + scenerand() * 0.06;
+		break;
+	case SOcta:
+		s->scale = 0.48 + scenerand() * 0.06;
+		break;
+	default:
+		s->scale = 0.38 + scenerand() * 0.06;
+		break;
+	}
+	s->life = 6.5 + scenerand() * 2.0;
+
+	/* start at an edge and bounce inward so shapes cross the scene */
+	switch((int)(scenerand() * 4.0)){
+	case 0:
+		s->x = -1.00;
+		s->y = (scenerand() * 2.0 - 1.0) * 0.55;
+		s->vx = 0.28 + scenerand() * 0.34;
+		s->vy = (scenerand() * 2.0 - 1.0) * 0.42;
+		break;
+	case 1:
+		s->x = 1.00;
+		s->y = (scenerand() * 2.0 - 1.0) * 0.55;
+		s->vx = -0.28 - scenerand() * 0.34;
+		s->vy = (scenerand() * 2.0 - 1.0) * 0.42;
+		break;
+	case 2:
+		s->x = (scenerand() * 2.0 - 1.0) * 0.90;
+		s->y = -0.68;
+		s->vx = (scenerand() * 2.0 - 1.0) * 0.42;
+		s->vy = 0.24 + scenerand() * 0.30;
+		break;
+	default:
+		s->x = (scenerand() * 2.0 - 1.0) * 0.90;
+		s->y = 0.68;
+		s->vx = (scenerand() * 2.0 - 1.0) * 0.42;
+		s->vy = -0.24 - scenerand() * 0.30;
+		break;
+	}
+	s->z = (scenerand() * 2.0 - 1.0) * 0.30;
+	s->vz = (scenerand() * 2.0 - 1.0) * 0.34;
+
+	s->rx = scenerand() * 6.283185307179586;
+	s->ry = scenerand() * 6.283185307179586;
+	s->rz = scenerand() * 6.283185307179586;
+	s->wx = (scenerand() * 2.0 - 1.0) * 2.4;
+	s->wy = (scenerand() * 2.0 - 1.0) * 2.0;
+	s->wz = (scenerand() * 2.0 - 1.0) * 1.2;
+
+	dot = strrchr(name, '/');
+	if(dot != nil)
+		name = dot + 1;
+	for(i = 0; name[i] != 0 && i < (int)sizeof s->name - 1; i++)
+		s->name[i] = name[i];
+	s->name[i] = 0;
+	return s;
+}
+
+void
+sceneadvance(double dt)
+{
+	Shape *s;
+	int i, j;
+
+	if(dt <= 0)
+		return;
+	if(dt > 0.25)
+		dt = 0.25;
+
+	for(i = 0; i < nshapes; i++){
+		s = &shapes[i];
+
+		if(s->life > 0){
+			s->life -= dt;
+			if(s->life <= 0){
+				for(j = i; j < nshapes - 1; j++)
+					shapes[j] = shapes[j + 1];
+				nshapes--;
+				i--;
+				continue;
+			}
+		}
+
+		if(s->kind == STorus){
+			s->rx += spin * dt;
+			s->ry += spin * 0.5 * dt;
+			continue;
+		}
+
+		s->x += s->vx * dt;
+		s->y += s->vy * dt;
+		s->z += s->vz * dt;
+
+		if(s->x < -XBOUND){
+			s->x = -XBOUND;
+			s->vx = -s->vx;
+		}
+		if(s->x > XBOUND){
+			s->x = XBOUND;
+			s->vx = -s->vx;
+		}
+		if(s->y < -YBOUND){
+			s->y = -YBOUND;
+			s->vy = -s->vy;
+		}
+		if(s->y > YBOUND){
+			s->y = YBOUND;
+			s->vy = -s->vy;
+		}
+		if(s->z < -ZBOUND){
+			s->z = -ZBOUND;
+			s->vz = -s->vz;
+		}
+		if(s->z > ZBOUND){
+			s->z = ZBOUND;
+			s->vz = -s->vz;
+		}
+
+		s->rx += s->wx * dt;
+		s->ry += s->wy * dt;
+		s->rz += s->wz * dt;
+	}
+}
+
+static void
+viewinit(View *v, Shape *s)
+{
+	double fade;
+
+	v->s = s;
+	fade = 1.0;
+	if(s->life > 0 && s->life < 1.5)
+		fade = s->life / 1.5;
+	v->scale = s->scale * fade;
+	v->cx = cos(s->rx);
+	v->sx = sin(s->rx);
+	v->cy = cos(s->ry);
+	v->sy = sin(s->ry);
+	v->cz = cos(s->rz);
+	v->sz = sin(s->rz);
+}
+
+static void
+viewpoint(View *v, double x, double y, double z, double *wx, double *wy, double *wz)
+{
+	double y1, z1, x2, z2, x3, y3;
+	Shape *s;
+
+	s = v->s;
+
+	y1 = y * v->cx - z * v->sx;
+	z1 = y * v->sx + z * v->cx;
+	x2 = x * v->cy + z1 * v->sy;
+	z2 = -x * v->sy + z1 * v->cy;
+	x3 = x2 * v->cz - y1 * v->sz;
+	y3 = x2 * v->sz + y1 * v->cz;
+
+	*wx = x3 * v->scale + s->x;
+	*wy = y3 * v->scale + s->y;
+	*wz = z2 * v->scale + s->z;
+}
+
+static void
+viewnormal(View *v, double x, double y, double z, double *nx, double *ny, double *nz)
+{
+	double y1, z1, x2;
+
+	y1 = y * v->cx - z * v->sx;
+	z1 = y * v->sx + z * v->cx;
+	x2 = x * v->cy + z1 * v->sy;
+	*nz = -x * v->sy + z1 * v->cy;
+	*nx = x2 * v->cz - y1 * v->sz;
+	*ny = x2 * v->sz + y1 * v->cz;
+}
+
+static int
+shadeof(View *v, double nx, double ny, double nz)
+{
+	double lum, rn[3];
+	int idx;
+
+	viewnormal(v, nx, ny, nz, &rn[0], &rn[1], &rn[2]);
+	lum = rn[0] * LX + rn[1] * LY + rn[2] * LZ;
+	if(lum < 0)
+		lum = 0;
+	lum = 0.15 + 0.85 * lum;
+	idx = 1 + (int)(lum * 8.0);
+	if(idx > 9)
+		idx = 9;
+	return idx;
+}
+
+static void
+plot(View *v, Canvas *c, double x, double y, double z, char ch, double bias)
+{
+	double d;
+	int px, py;
+
+	if(z + CAMZ < 0.35)
+		return;
+	d = 1.0 / (z + CAMZ);
+	px = GW / 2 + (int)(XSCALE * x * d);
+	py = GH / 2 + (int)(YSCALE * y * d);
+	if(px < 0 || px >= GW || py < 0 || py >= GH)
+		return;
+	if(d + bias < c->zbuf[py][px])
+		return;
+	c->zbuf[py][px] = d;
+	c->out[py][px] = ch;
+	c->style[py][px] = v->s->style;
+}
+
+static void
+edge(View *v, Canvas *c, V3 a, V3 b)
+{
+	double dx, dy, dz, len, t, x, y, z;
+	int i, n;
+
+	dx = b.x - a.x;
+	dy = b.y - a.y;
+	dz = b.z - a.z;
+	len = sqrt(dx * dx + dy * dy + dz * dz);
+	n = 3 + (int)(len * 14.0);
+	if(n > 60)
+		n = 60;
+
+	for(i = 0; i <= n; i++){
+		t = (double)i / (double)n;
+		viewpoint(v, a.x + dx * t, a.y + dy * t, a.z + dz * t, &x, &y, &z);
+		plot(v, c, x, y, z, '@', 0.004);
+	}
+}
+
+static void
+face(View *v, Canvas *c, V3 *verts, Face *f)
+{
+	V3 a, b, cen, p;
+	double u, w, nx, ny, nz, len, x, y, z;
+	int i, idx;
+
+	nx = ny = nz = 0;
+	cen.x = cen.y = cen.z = 0;
+	for(i = 0; i < f->n; i++){
+		a = verts[f->v[i]];
+		b = verts[f->v[(i + 1) % f->n]];
+		nx += (a.y - b.y) * (a.z + b.z);
+		ny += (a.z - b.z) * (a.x + b.x);
+		nz += (a.x - b.x) * (a.y + b.y);
+		cen.x += a.x;
+		cen.y += a.y;
+		cen.z += a.z;
+	}
+	cen.x /= f->n;
+	cen.y /= f->n;
+	cen.z /= f->n;
+
+	len = sqrt(nx * nx + ny * ny + nz * nz);
+	if(len < 1e-9)
+		return;
+	nx /= len;
+	ny /= len;
+	nz /= len;
+	if(nx * cen.x + ny * cen.y + nz * cen.z < 0){
+		nx = -nx;
+		ny = -ny;
+		nz = -nz;
+	}
+
+	idx = shadeof(v, nx, ny, nz);
+
+	for(i = 1; i < f->n - 1; i++){
+		for(u = 0; u <= 1.0; u += 0.055){
+			for(w = 0; w <= 1.0 - u; w += 0.055){
+				p.x = verts[f->v[0]].x
+					+ u * (verts[f->v[i]].x - verts[f->v[0]].x)
+					+ w * (verts[f->v[i + 1]].x - verts[f->v[0]].x);
+				p.y = verts[f->v[0]].y
+					+ u * (verts[f->v[i]].y - verts[f->v[0]].y)
+					+ w * (verts[f->v[i + 1]].y - verts[f->v[0]].y);
+				p.z = verts[f->v[0]].z
+					+ u * (verts[f->v[i]].z - verts[f->v[0]].z)
+					+ w * (verts[f->v[i + 1]].z - verts[f->v[0]].z);
+				viewpoint(v, p.x, p.y, p.z, &x, &y, &z);
+				plot(v, c, x, y, z, ramp[idx], 0.0);
+			}
+		}
+	}
+
+	for(i = 0; i < f->n; i++)
+		edge(v, c, verts[f->v[i]], verts[f->v[(i + 1) % f->n]]);
+}
+
+static void
+poly(View *v, Canvas *c, V3 *verts, Face *faces, int nface)
+{
+	int i;
+
+	for(i = 0; i < nface; i++)
+		face(v, c, verts, &faces[i]);
+}
+
+static void
+torus(View *v, Canvas *c)
+{
+	double u, w, cu, su, cw, sw, r, x, y, z, nx, ny, nz;
+	int idx;
+
+	for(u = 0; u < 6.283185307179586; u += 0.09){
+		cu = cos(u);
+		su = sin(u);
+		for(w = 0; w < 6.283185307179586; w += 0.13){
+			cw = cos(w);
+			sw = sin(w);
+			r = 0.36;
+			x = (1.0 + r * cw) * cu;
+			y = (1.0 + r * cw) * su;
+			z = r * sw;
+			nx = cw * cu;
+			ny = cw * su;
+			nz = sw;
+			idx = shadeof(v, nx, ny, nz);
+			viewpoint(v, x, y, z, &x, &y, &z);
+			plot(v, c, x, y, z, ramp[idx], 0.0);
+		}
+	}
+}
+
+void
+scenerender(char out[GH][GW+1], uchar style[GH][GW])
+{
+	Canvas c;
+	View v;
+	double zbuf[GH][GW];
+	int x, y, i;
+
+	c.out = out;
+	c.style = style;
+	c.zbuf = zbuf;
+
+	for(y = 0; y < GH; y++){
+		for(x = 0; x < GW; x++){
+			out[y][x] = ' ';
+			style[y][x] = StyleMain;
+			zbuf[y][x] = 0;
+		}
+		out[y][GW] = 0;
+	}
+
+	for(i = 0; i < nshapes; i++){
+		viewinit(&v, &shapes[i]);
+		switch(shapes[i].kind){
+		case STorus:
+			torus(&v, &c);
+			break;
+		case SCube:
+			poly(&v, &c, cubev, cubef, nelem(cubef));
+			break;
+		case SPyramid:
+			poly(&v, &c, pyramidv, pyramidf, nelem(pyramidf));
+			break;
+		case STetra:
+			poly(&v, &c, tetrav, tetraf, nelem(tetraf));
+			break;
+		case SOcta:
+			poly(&v, &c, octav, octaf, nelem(octaf));
+			break;
+		}
+	}
+}
