@@ -34,6 +34,7 @@ static Image *red;
 static Image *toolcol;
 static Font *f;
 static int cw, ch;
+static int gw, gh;
 
 static char *baseurl;
 static char *feedpath;
@@ -281,38 +282,64 @@ setspeed(void)
 	scenesetspeed(s * FPS);
 }
 
+static void
+geom(void)
+{
+	int cols, rows;
+
+	cols = (Dx(screen->r) - 8) / cw;
+	rows = (Dy(screen->r) - 8) / ch - SH;
+	if(cols < 20)
+		cols = 20;
+	if(rows < 6)
+		rows = 6;
+	if(cols > MaxGW)
+		cols = MaxGW;
+	if(rows > MaxGH)
+		rows = MaxGH;
+	gw = cols;
+	gh = rows;
+	if(back != nil){
+		freeimage(back);
+		back = nil;
+	}
+	back = allocimage(display, Rect(0,0,gw*cw,(gh+SH)*ch), screen->chan, 0, DNofill);
+	if(back == nil)
+		sysfatal("allocimage: %r");
+}
+
 static Point
 origin(void)
 {
 	Point p;
 
 	p = screen->r.min;
-	if(Dx(screen->r) > GW*cw)
-		p.x += (Dx(screen->r) - GW*cw) / 2;
-	if(Dy(screen->r) > (GH+SH)*ch)
-		p.y += (Dy(screen->r) - (GH+SH)*ch) / 2;
+	if(Dx(screen->r) > gw*cw)
+		p.x += (Dx(screen->r) - gw*cw) / 2;
+	if(Dy(screen->r) > (gh+SH)*ch)
+		p.y += (Dy(screen->r) - (gh+SH)*ch) / 2;
 	return p;
 }
 
 static void
 redraw(void)
 {
-	char out[GH][GW+1];
-	uchar style[GH][GW];
-	char run[GW+1];
+	static char out[MaxGH][MaxGW+1];
+	static uchar style[MaxGH][MaxGW];
+	char run[MaxGW+1];
 	char line[128];
 	Point p;
 	Image *fg;
 	int x, y, i, n;
 
-	scenerender(out, style);
+	scenerender(out, style, gw, gh);
 
 	fg = statecolor();
 	draw(back, back->r, display->black, nil, ZP);
-	for(y = 0; y < GH; y++){
-		for(x = 0; x < GW; ){
+	for(y = 0; y < gh; y++){
+		for(x = 0; x < gw; ){
 			i = x;
-			while(i < GW && style[y][i] == style[y][x])
+			while(i < gw && style[y][i] == style[y][x])
 				i++;
 			n = i - x;
 			memmove(run, &out[y][x], n);
@@ -329,10 +356,10 @@ redraw(void)
 		n += snprint(line + n, sizeof line - n, " |");
 	for(i = 0; i < ntoolnames && n < (int)sizeof line; i++)
 		n += snprint(line + n, sizeof line - n, " %s", toolnames[i]);
-	string(back, Pt(0, GH*ch), fg, ZP, f, line);
+	string(back, Pt(0, gh*ch), fg, ZP, f, line);
 
 	p = origin();
-	draw(screen, Rect(p.x, p.y, p.x + GW*cw, p.y + (GH+SH)*ch), back, nil, ZP);
+	draw(screen, Rect(p.x, p.y, p.x + gw*cw, p.y + (gh+SH)*ch), back, nil, ZP);
 	flushimage(display, 1);
 }
 
@@ -341,8 +368,10 @@ eresized(int new)
 {
 	if(new && getwindow(display, Refnone) < 0)
 		sysfatal("resize: %r");
-	if(back)
+	if(cw > 0 && ch > 0){
+		geom();
 		redraw();
+	}
 }
 
 static void
@@ -355,11 +384,11 @@ usage(void)
 static void
 printframe(void)
 {
-	char out[GH][GW+1];
-	uchar style[GH][GW];
+	static char out[MaxGH][MaxGW+1];
+	static uchar style[MaxGH][MaxGW];
 	int y;
 
-	scenerender(out, style);
+	scenerender(out, style, GW, GH);
 	for(y = 0; y < GH; y++)
 		print("%s\n", out[y]);
 }
@@ -409,15 +438,16 @@ main(int argc, char **argv)
 	scenesrand(nsec());
 	scenereset();
 
+	if(all){
+		scenespawntool("cmd");
+		scenespawntool("read");
+		scenespawntool("fetch");
+		scenespawntool("agent");
+		for(i = 0; i < 12; i++)
+			sceneadvance(0.05);
+	}
+
 	if(test){
-		if(all){
-			scenespawntool("cmd");
-			scenespawntool("read");
-			scenespawntool("fetch");
-			scenespawntool("agent");
-			for(i = 0; i < 12; i++)
-				sceneadvance(0.05);
-		}
 		printframe();
 		exits(nil);
 	}
@@ -452,9 +482,8 @@ main(int argc, char **argv)
 	if(green == nil || amber == nil || dim == nil || red == nil || toolcol == nil)
 		sysfatal("allocimage: %r");
 
-	back = allocimage(display, Rect(0,0,GW*cw,(GH+SH)*ch), screen->chan, 0, DNofill);
-	if(back == nil)
-		sysfatal("allocimage: %r");
+	back = nil;
+	geom();
 
 	einit(Emouse|Ekeyboard);
 	tk = etimer(0, 1000/FPS);

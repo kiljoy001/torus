@@ -2,8 +2,10 @@
 #define HALATHA_SCENE_H
 
 enum {
-	GW		= 60,	/* grid width in characters */
-	GH		= 16,	/* grid height in characters */
+	GW		= 60,	/* base grid width in characters */
+	GH		= 16,	/* base grid height in characters */
+	MaxGW		= 240,	/* largest grid we will render */
+	MaxGH		= 80,
 	MaxShapes	= 8,
 	StyleMain	= 0,
 	StyleTool	= 1,
@@ -37,6 +39,6 @@ void	sceneclear(void);
 Shape*	scenespawntool(char*);
 void	scenesetspeed(double);
 void	sceneadvance(double);
-void	scenerender(char[GH][GW+1], uchar[GH][GW]);
+void	scenerender(char[MaxGH][MaxGW+1], uchar[MaxGH][MaxGW], int, int);
 
 #endif

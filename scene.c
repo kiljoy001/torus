@@ -37,9 +37,12 @@ struct View {
 
 typedef struct Canvas Canvas;
 struct Canvas {
-	char	(*out)[GW+1];
-	uchar	(*style)[GW];
-	double	(*zbuf)[GW];
+	char	(*out)[MaxGW+1];
+	uchar	(*style)[MaxGW];
+	double	(*zbuf)[MaxGW];
+	int	w, h;
+	double	sx, sy;
+	double	zoom;
 };
 
 static Shape shapes[MaxShapes];
@@ -391,9 +394,9 @@ plot(View *v, Canvas *c, double x, double y, double z, char ch, double bias)
 	if(z + CAMZ < 0.35)
 		return;
 	d = 1.0 / (z + CAMZ);
-	px = GW / 2 + (int)(XSCALE * x * d);
-	py = GH / 2 + (int)(YSCALE * y * d);
-	if(px < 0 || px >= GW || py < 0 || py >= GH)
+	px = c->w / 2 + (int)(c->sx * x * d);
+	py = c->h / 2 + (int)(c->sy * y * d);
+	if(px < 0 || px >= c->w || py < 0 || py >= c->h)
 		return;
 	if(d + bias < c->zbuf[py][px])
 		return;
@@ -412,9 +415,11 @@ edge(View *v, Canvas *c, V3 a, V3 b)
 	dy = b.y - a.y;
 	dz = b.z - a.z;
 	len = sqrt(dx * dx + dy * dy + dz * dz);
-	n = 3 + (int)(len * 14.0);
-	if(n > 60)
-		n = 60;
+	n = (int)((3 + len * 14.0) * c->zoom);
+	if(n < 4)
+		n = 4;
+	if(n > 240)
+		n = 240;
 
 	for(i = 0; i <= n; i++){
 		t = (double)i / (double)n;
@@ -427,7 +432,7 @@ static void
 face(View *v, Canvas *c, V3 *verts, Face *f)
 {
 	V3 a, b, cen, p;
-	double u, w, nx, ny, nz, len, x, y, z;
+	double u, w, nx, ny, nz, len, x, y, z, step;
 	int i, idx;
 
 	nx = ny = nz = 0;
@@ -460,9 +465,15 @@ face(View *v, Canvas *c, V3 *verts, Face *f)
 
 	idx = shadeof(v, nx, ny, nz);
 
+	step = 0.055 / c->zoom;
+	if(step < 0.012)
+		step = 0.012;
+	if(step > 0.12)
+		step = 0.12;
+
 	for(i = 1; i < f->n - 1; i++){
-		for(u = 0; u <= 1.0; u += 0.055){
-			for(w = 0; w <= 1.0 - u; w += 0.055){
+		for(u = 0; u <= 1.0; u += step){
+			for(w = 0; w <= 1.0 - u; w += step){
 				p.x = verts[f->v[0]].x
 					+ u * (verts[f->v[i]].x - verts[f->v[0]].x)
 					+ w * (verts[f->v[i + 1]].x - verts[f->v[0]].x);
@@ -495,12 +506,24 @@ static void
 torus(View *v, Canvas *c)
 {
 	double u, w, cu, su, cw, sw, r, x, y, z, nx, ny, nz;
+	double du, dw;
 	int idx;
 
-	for(u = 0; u < 6.283185307179586; u += 0.09){
+	du = 0.09 / c->zoom;
+	dw = 0.13 / c->zoom;
+	if(du < 0.02)
+		du = 0.02;
+	if(du > 0.18)
+		du = 0.18;
+	if(dw < 0.03)
+		dw = 0.03;
+	if(dw > 0.26)
+		dw = 0.26;
+
+	for(u = 0; u < 6.283185307179586; u += du){
 		cu = cos(u);
 		su = sin(u);
-		for(w = 0; w < 6.283185307179586; w += 0.13){
+		for(w = 0; w < 6.283185307179586; w += dw){
 			cw = cos(w);
 			sw = sin(w);
 			r = 0.36;
@@ -518,24 +541,45 @@ torus(View *v, Canvas *c)
 }
 
 void
-scenerender(char out[GH][GW+1], uchar style[GH][GW])
+scenerender(char out[MaxGH][MaxGW+1], uchar style[MaxGH][MaxGW], int w, int h)
 {
+	static double zbuf[MaxGH][MaxGW];
 	Canvas c;
 	View v;
-	double zbuf[GH][GW];
+	double zx, zy;
 	int x, y, i;
+
+	if(w > MaxGW)
+		w = MaxGW;
+	if(h > MaxGH)
+		h = MaxGH;
+	if(w < 1)
+		w = 1;
+	if(h < 1)
+		h = 1;
 
 	c.out = out;
 	c.style = style;
 	c.zbuf = zbuf;
+	c.w = w;
+	c.h = h;
+	zx = (double)w / GW;
+	zy = (double)h / GH;
+	c.zoom = zx < zy ? zx : zy;
+	if(c.zoom < 0.5)
+		c.zoom = 0.5;
+	if(c.zoom > 4.0)
+		c.zoom = 4.0;
+	c.sx = XSCALE * c.zoom;
+	c.sy = YSCALE * c.zoom;
 
-	for(y = 0; y < GH; y++){
-		for(x = 0; x < GW; x++){
+	for(y = 0; y < h; y++){
+		for(x = 0; x < w; x++){
 			out[y][x] = ' ';
 			style[y][x] = StyleMain;
 			zbuf[y][x] = 0;
 		}
-		out[y][GW] = 0;
+		out[y][w] = 0;
 	}
 
 	for(i = 0; i < nshapes; i++){

@@ -28,7 +28,7 @@ Options:
 | `-u baseurl` | llama.cpp server, default `$oaiurl` or `http://127.0.0.1:8080` |
 | `-f toolfeed` | tool-call feed, default `$oaitoolfeed` or `/tmp/oai.toolcalls` |
 | `-t` | print one frame to stdout and exit |
-| `-a` | with `-t`, spawn sample tool shapes first |
+| `-a` | spawn one of each sample tool shape at startup (also with `-t`) |
 | `-s` | print the status line 20 times and exit |
 
 ## How it works
@@ -47,6 +47,15 @@ that file and maps tool names to shapes:
 | `read`, `write`, `list`, `memory` | pyramid |
 | `fetch`, `searxng` | octahedron |
 | `agent`, `summarize` | tetrahedron |
+
+At startup only the torus is shown. Shapes appear as tool calls arrive;
+`torus -a` seeds one of each so the renderer can be checked without
+running `oai`.
+
+The view follows the window. Resizing recomputes the character grid
+(up to 240x80 cells) and scales the scene uniformly, so a larger window
+shows a larger, more detailed torus. The status line stays at the
+bottom of the grid.
 
 ## Files
 
