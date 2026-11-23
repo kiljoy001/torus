@@ -4,10 +4,8 @@
 
 #define CAMZ	3.2
 #define XSCALE	26.0
-#define YSCALE	13.0
-#define XBOUND	1.25
-#define YBOUND	0.80
-#define ZBOUND	0.45
+#define FILL	0.85	/* fraction of the limiting dimension to occupy */
+#define PROJ	0.66	/* projected diameter per unit of world radius */
 
 #define LX	-0.42
 #define LY	-0.58
@@ -45,9 +43,10 @@ struct Canvas {
 	double	zoom;
 };
 
-static Shape shapes[MaxShapes];
-static int nshapes;
-static double spin = 0.18;	/* torus radians/second */
+static Shape shape;
+static int mainkind = STorus;
+static double aspect = 2.0;
+static double spin = 0.18;	/* radians/second */
 static ulong rng = 1;
 
 static V3 cubev[] = {
@@ -135,198 +134,75 @@ scenesetspeed(double s)
 	spin = s;
 }
 
-static int
-shapefor(char *name)
+static double
+shaperadius(int kind)
 {
-	if(strstr(name, "fetch") != nil || strstr(name, "searxng") != nil)
-		return SOcta;
-	if(strstr(name, "agent") != nil || strstr(name, "summar") != nil)
-		return STetra;
-	if(strstr(name, "read") != nil || strstr(name, "write") != nil
-	|| strstr(name, "list") != nil || strstr(name, "memory") != nil)
-		return SPyramid;
-	return SCube;
+	switch(kind){
+	case STorus:
+		return 1.36;
+	case SOcta:
+		return 1.0;
+	default:
+		return 1.7320508075688772;	/* cube corner, square pyramid base, tetra vertex */
+	}
+}
+
+int
+scenesetshape(char *name)
+{
+	if(strcmp(name, "torus") == 0)
+		mainkind = STorus;
+	else if(strcmp(name, "cube") == 0)
+		mainkind = SCube;
+	else if(strcmp(name, "pyramid") == 0)
+		mainkind = SPyramid;
+	else if(strcmp(name, "tetra") == 0)
+		mainkind = STetra;
+	else if(strcmp(name, "octa") == 0)
+		mainkind = SOcta;
+	else
+		return -1;
+	return 0;
+}
+
+void
+scenesetaspect(double a)
+{
+	/* character cells are taller than they are wide */
+	if(a > 0.5 && a < 8.0)
+		aspect = a;
 }
 
 void
 scenereset(void)
 {
-	Shape *s;
-
-	memset(shapes, 0, sizeof shapes);
-	nshapes = 0;
-
-	s = &shapes[nshapes++];
-	s->kind = STorus;
-	s->scale = 0.80;
-	s->style = StyleMain;
-	s->rx = 0.35;
-	s->ry = 0.15;
-}
-
-void
-sceneclear(void)
-{
-	nshapes = 0;
-}
-
-Shape*
-scenespawntool(char *name)
-{
-	Shape *s;
-	int i;
-	char *dot;
-
-	if(name == nil)
-		name = "tool";
-	if(nshapes >= MaxShapes){
-		/* drop the oldest transient shape, never the torus */
-		memmove(&shapes[1], &shapes[2], (nshapes - 2) * sizeof(Shape));
-		nshapes--;
-	}
-
-	s = &shapes[nshapes++];
-	memset(s, 0, sizeof *s);
-	s->kind = shapefor(name);
-	s->style = StyleTool;
-	switch(s->kind){
-	case SPyramid:
-		s->scale = 0.42 + scenerand() * 0.06;
-		break;
-	case STetra:
-		s->scale = 0.52 + scenerand() * 0.06;
-		break;
-	case SOcta:
-		s->scale = 0.48 + scenerand() * 0.06;
-		break;
-	default:
-		s->scale = 0.38 + scenerand() * 0.06;
-		break;
-	}
-	s->life = 6.5 + scenerand() * 2.0;
-
-	/* start at an edge and bounce inward so shapes cross the scene */
-	switch((int)(scenerand() * 4.0)){
-	case 0:
-		s->x = -1.00;
-		s->y = (scenerand() * 2.0 - 1.0) * 0.55;
-		s->vx = 0.28 + scenerand() * 0.34;
-		s->vy = (scenerand() * 2.0 - 1.0) * 0.42;
-		break;
-	case 1:
-		s->x = 1.00;
-		s->y = (scenerand() * 2.0 - 1.0) * 0.55;
-		s->vx = -0.28 - scenerand() * 0.34;
-		s->vy = (scenerand() * 2.0 - 1.0) * 0.42;
-		break;
-	case 2:
-		s->x = (scenerand() * 2.0 - 1.0) * 0.90;
-		s->y = -0.68;
-		s->vx = (scenerand() * 2.0 - 1.0) * 0.42;
-		s->vy = 0.24 + scenerand() * 0.30;
-		break;
-	default:
-		s->x = (scenerand() * 2.0 - 1.0) * 0.90;
-		s->y = 0.68;
-		s->vx = (scenerand() * 2.0 - 1.0) * 0.42;
-		s->vy = -0.24 - scenerand() * 0.30;
-		break;
-	}
-	s->z = (scenerand() * 2.0 - 1.0) * 0.30;
-	s->vz = (scenerand() * 2.0 - 1.0) * 0.34;
-
-	s->rx = scenerand() * 6.283185307179586;
-	s->ry = scenerand() * 6.283185307179586;
-	s->rz = scenerand() * 6.283185307179586;
-	s->wx = (scenerand() * 2.0 - 1.0) * 2.4;
-	s->wy = (scenerand() * 2.0 - 1.0) * 2.0;
-	s->wz = (scenerand() * 2.0 - 1.0) * 1.2;
-
-	dot = strrchr(name, '/');
-	if(dot != nil)
-		name = dot + 1;
-	for(i = 0; name[i] != 0 && i < (int)sizeof s->name - 1; i++)
-		s->name[i] = name[i];
-	s->name[i] = 0;
-	return s;
+	memset(&shape, 0, sizeof shape);
+	shape.kind = mainkind;
+	shape.scale = 1.0 / shaperadius(mainkind);
+	shape.style = StyleMain;
+	shape.rx = 0.35 + (scenerand() - 0.5) * 0.10;
+	shape.ry = 0.15 + (scenerand() - 0.5) * 0.10;
+	shape.rz = (scenerand() - 0.5) * 0.10;
 }
 
 void
 sceneadvance(double dt)
 {
-	Shape *s;
-	int i, j;
-
 	if(dt <= 0)
 		return;
 	if(dt > 0.25)
 		dt = 0.25;
 
-	for(i = 0; i < nshapes; i++){
-		s = &shapes[i];
-
-		if(s->life > 0){
-			s->life -= dt;
-			if(s->life <= 0){
-				for(j = i; j < nshapes - 1; j++)
-					shapes[j] = shapes[j + 1];
-				nshapes--;
-				i--;
-				continue;
-			}
-		}
-
-		if(s->kind == STorus){
-			s->rx += spin * dt;
-			s->ry += spin * 0.5 * dt;
-			continue;
-		}
-
-		s->x += s->vx * dt;
-		s->y += s->vy * dt;
-		s->z += s->vz * dt;
-
-		if(s->x < -XBOUND){
-			s->x = -XBOUND;
-			s->vx = -s->vx;
-		}
-		if(s->x > XBOUND){
-			s->x = XBOUND;
-			s->vx = -s->vx;
-		}
-		if(s->y < -YBOUND){
-			s->y = -YBOUND;
-			s->vy = -s->vy;
-		}
-		if(s->y > YBOUND){
-			s->y = YBOUND;
-			s->vy = -s->vy;
-		}
-		if(s->z < -ZBOUND){
-			s->z = -ZBOUND;
-			s->vz = -s->vz;
-		}
-		if(s->z > ZBOUND){
-			s->z = ZBOUND;
-			s->vz = -s->vz;
-		}
-
-		s->rx += s->wx * dt;
-		s->ry += s->wy * dt;
-		s->rz += s->wz * dt;
-	}
+	shape.rx += spin * dt;
+	shape.ry += spin * 0.6 * dt;
+	shape.rz += spin * 0.3 * dt;
 }
 
 static void
 viewinit(View *v, Shape *s)
 {
-	double fade;
-
 	v->s = s;
-	fade = 1.0;
-	if(s->life > 0 && s->life < 1.5)
-		fade = s->life / 1.5;
-	v->scale = s->scale * fade;
+	v->scale = s->scale;
 	v->cx = cos(s->rx);
 	v->sx = sin(s->rx);
 	v->cy = cos(s->ry);
@@ -546,8 +422,8 @@ scenerender(char out[MaxGH][MaxGW+1], uchar style[MaxGH][MaxGW], int w, int h)
 	static double zbuf[MaxGH][MaxGW];
 	Canvas c;
 	View v;
-	double zx, zy;
-	int x, y, i;
+	double fit;
+	int x, y;
 
 	if(w > MaxGW)
 		w = MaxGW;
@@ -563,15 +439,22 @@ scenerender(char out[MaxGH][MaxGW+1], uchar style[MaxGH][MaxGW], int w, int h)
 	c.zbuf = zbuf;
 	c.w = w;
 	c.h = h;
-	zx = (double)w / GW;
-	zy = (double)h / GH;
-	c.zoom = zx < zy ? zx : zy;
-	if(c.zoom < 0.5)
-		c.zoom = 0.5;
-	if(c.zoom > 4.0)
-		c.zoom = 4.0;
+
+	/*
+	 * Fill most of the limiting dimension.  The projection is
+	 * circular in pixels when sx/sy equals the cell aspect ratio
+	 * (height/width), so derive sy from sx and scale both from
+	 * the smaller of the available width and the width equivalent
+	 * of the height.
+	 */
+	fit = w;
+	if(h * aspect < fit)
+		fit = h * aspect;
+	c.zoom = FILL * fit / (PROJ * XSCALE);
+	if(c.zoom < 0.35)
+		c.zoom = 0.35;
 	c.sx = XSCALE * c.zoom;
-	c.sy = YSCALE * c.zoom;
+	c.sy = c.sx / aspect;
 
 	for(y = 0; y < h; y++){
 		for(x = 0; x < w; x++){
@@ -582,24 +465,22 @@ scenerender(char out[MaxGH][MaxGW+1], uchar style[MaxGH][MaxGW], int w, int h)
 		out[y][w] = 0;
 	}
 
-	for(i = 0; i < nshapes; i++){
-		viewinit(&v, &shapes[i]);
-		switch(shapes[i].kind){
-		case STorus:
-			torus(&v, &c);
-			break;
-		case SCube:
-			poly(&v, &c, cubev, cubef, nelem(cubef));
-			break;
-		case SPyramid:
-			poly(&v, &c, pyramidv, pyramidf, nelem(pyramidf));
-			break;
-		case STetra:
-			poly(&v, &c, tetrav, tetraf, nelem(tetraf));
-			break;
-		case SOcta:
-			poly(&v, &c, octav, octaf, nelem(octaf));
-			break;
-		}
+	viewinit(&v, &shape);
+	switch(shape.kind){
+	case STorus:
+		torus(&v, &c);
+		break;
+	case SCube:
+		poly(&v, &c, cubev, cubef, nelem(cubef));
+		break;
+	case SPyramid:
+		poly(&v, &c, pyramidv, pyramidf, nelem(pyramidf));
+		break;
+	case STetra:
+		poly(&v, &c, tetrav, tetraf, nelem(tetraf));
+		break;
+	case SOcta:
+		poly(&v, &c, octav, octaf, nelem(octaf));
+		break;
 	}
 }

@@ -6,4 +6,4 @@ HFILES=scene.h
 
 </sys/src/cmd/mkone
 
-$O.out:	/$objtype/lib/libdraw.a
+$O.out:	/$objtype/lib/libdraw.a /$objtype/lib/libthread.a

@@ -4,11 +4,9 @@
 enum {
 	GW		= 60,	/* base grid width in characters */
 	GH		= 16,	/* base grid height in characters */
-	MaxGW		= 240,	/* largest grid we will render */
-	MaxGH		= 80,
-	MaxShapes	= 8,
+	MaxGW		= 600,	/* largest grid we will render */
+	MaxGH		= 160,
 	StyleMain	= 0,
-	StyleTool	= 1,
 };
 
 enum {
@@ -24,19 +22,16 @@ typedef struct Shape Shape;
 struct Shape {
 	int	kind;
 	double	x, y, z;	/* position in world space */
-	double	vx, vy, vz;	/* bounce velocity */
 	double	rx, ry, rz;	/* rotation */
-	double	wx, wy, wz;	/* spin, radians/second */
 	double	scale;
-	double	life;		/* <= 0 means permanent */
 	int	style;
 	char	name[16];
 };
 
 void	scenesrand(ulong);
 void	scenereset(void);
-void	sceneclear(void);
-Shape*	scenespawntool(char*);
+int	scenesetshape(char*);
+void	scenesetaspect(double);
 void	scenesetspeed(double);
 void	sceneadvance(double);
 void	scenerender(char[MaxGH][MaxGW+1], uchar[MaxGH][MaxGW], int, int);
